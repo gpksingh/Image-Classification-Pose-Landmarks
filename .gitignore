@@ -8,3 +8,5 @@ env/
 yoga-pose-image-classification-dataset.zip
 dataset
 
+#ignore csv files
+/*.csv
