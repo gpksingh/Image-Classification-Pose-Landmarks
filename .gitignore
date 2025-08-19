@@ -10,3 +10,6 @@ dataset
 
 #ignore csv files
 /*.csv
+
+#ignore image data
+/YogaPoses
