@@ -3,6 +3,11 @@
 venv/
 ENV/
 env/
+myenv/
+package-lock.json/
+package.json/
+Yoga_live.jpynb/
+Yoga_live.py/
 
 #Ignore Downloaded Dataset
 yoga-pose-image-classification-dataset.zip
