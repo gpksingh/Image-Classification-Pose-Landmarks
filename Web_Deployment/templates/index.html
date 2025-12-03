@@ -5,10 +5,14 @@
     <title>Camera Select + Server Pose</title>
     <style>
       body{font-family:system-ui, sans-serif;display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px}
-      #video{width:640px;height:480px;background:#000}
+      /* bottom processed feed is the reference size */
       #processed{width:640px;height:480px;background:#222;object-fit:cover}
+      /* top raw video: 1/5 linear size of processed (width & height scaled) */
+      #video{width:calc(640px / 5);height:calc(480px / 5);background:#000;object-fit:cover;border:1px solid #111}
       #controls{display:flex;gap:8px;align-items:center}
       #status{color:#666}
+      .feeds { display:flex; flex-direction:column; align-items:center; gap:8px; }
+      .top-feed { margin-bottom:4px; }
     </style>
   </head>
   <body>
@@ -23,8 +27,14 @@
       <span id="status">idle</span>
     </div>
 
-    <video id="video" autoplay playsinline></video>
-    <img id="processed" alt="Processed stream (server)" />
+    <div class="feeds">
+      <div class="top-feed">
+        <!-- small raw preview -->
+        <video id="video" autoplay playsinline></video>
+      </div>
+      <!-- large processed stream -->
+      <img id="processed" alt="Processed stream (server)" />
+    </div>
 
     <script>
       const PROCESS_URL = '/process_frame'; // serve from Flask at localhost:8000
@@ -56,7 +66,7 @@
 
       async function start() {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          alert('Camera API unavailable. Serve page from http(s) or localhost.');
+          alert('Camera API unavailable. Serve page via Flask/https or use localhost.');
           return;
         }
         if (stream) stop();
@@ -64,7 +74,7 @@
         const deviceId = cameraSelect.value || undefined;
         try {
           stream = await navigator.mediaDevices.getUserMedia({
-            video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'user' },
+            video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'user', width: 640, height: 480 },
             audio: false
           });
           video.srcObject = stream;
@@ -112,7 +122,6 @@
           if (lastUrl) URL.revokeObjectURL(lastUrl);
           lastUrl = URL.createObjectURL(b);
           processed.src = lastUrl;
-          statusEl.textContent = 'ok';
         } catch (e) {
           console.error('network', e);
           statusEl.textContent = 'network error';
@@ -127,7 +136,6 @@
           if (!video || video.readyState < 2) return;
           if (inFlight) return;
           inFlight = true;
-          statusEl.textContent = 'sending...';
           const c = captureCanvas();
           c.toBlob(async (blob) => {
             try { if (blob) await sendFrame(blob); } finally { inFlight = false; }
@@ -146,7 +154,13 @@
           p.getTracks().forEach(t => t.stop());
           await listCameras();
         } catch (e) { /* ignore */ }
+
+        // auto-start capture so processed stream displays immediately (browser may require permission)
+        try { start(); } catch(e) { /* ignore */ }
       })();
+
+      // stop camera when leaving page
+      window.addEventListener('beforeunload', () => stop());
     </script>
   </body>
 </html>
