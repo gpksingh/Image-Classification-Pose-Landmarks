@@ -1,10 +1,152 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
-<head>
-    <title>Webcam Stream</title>
-</head>
-<body>
+  <head>
+    <meta charset="utf-8" />
+    <title>Camera Select + Server Pose</title>
+    <style>
+      body{font-family:system-ui, sans-serif;display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px}
+      #video{width:640px;height:480px;background:#000}
+      #processed{width:640px;height:480px;background:#222;object-fit:cover}
+      #controls{display:flex;gap:8px;align-items:center}
+      #status{color:#666}
+    </style>
+  </head>
+  <body>
     <h1>Live Pose Stream</h1>
-    <img src="{{ url_for('video_feed') }}" width="640" />
-</body>
+    <div id="controls">
+      <label>Camera:
+        <select id="cameraSelect"></select>
+      </label>
+      <button id="startBtn">Start</button>
+      <button id="stopBtn" disabled>Stop</button>
+      <label>FPS: <input id="fps" type="number" value="6" min="1" max="15" style="width:60px"></label>
+      <span id="status">idle</span>
+    </div>
+
+    <video id="video" autoplay playsinline></video>
+    <img id="processed" alt="Processed stream (server)" />
+
+    <script>
+      const PROCESS_URL = '/process_frame'; // serve from Flask at localhost:8000
+      const video = document.getElementById('video');
+      const processed = document.getElementById('processed');
+      const cameraSelect = document.getElementById('cameraSelect');
+      const startBtn = document.getElementById('startBtn');
+      const stopBtn = document.getElementById('stopBtn');
+      const fpsInput = document.getElementById('fps');
+      const statusEl = document.getElementById('status');
+
+      let stream = null;
+      let intervalId = null;
+      let inFlight = false;
+      let lastUrl = null;
+
+      async function listCameras() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cams = devices.filter(d => d.kind === 'videoinput');
+        cameraSelect.innerHTML = '';
+        cams.forEach((c, i) => {
+          const opt = document.createElement('option');
+          opt.value = c.deviceId;
+          opt.text = c.label || `Camera ${i+1}`;
+          cameraSelect.appendChild(opt);
+        });
+      }
+
+      async function start() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          alert('Camera API unavailable. Serve page from http(s) or localhost.');
+          return;
+        }
+        if (stream) stop();
+
+        const deviceId = cameraSelect.value || undefined;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'user' },
+            audio: false
+          });
+          video.srcObject = stream;
+          await video.play();
+          statusEl.textContent = 'running';
+          startLoop();
+          stopBtn.disabled = false;
+          startBtn.disabled = true;
+        } catch (e) {
+          console.error(e);
+          statusEl.textContent = 'camera error';
+        }
+      }
+
+      function stop() {
+        if (intervalId) { clearInterval(intervalId); intervalId = null; }
+        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+        video.srcObject = null;
+        statusEl.textContent = 'stopped';
+        stopBtn.disabled = true;
+        startBtn.disabled = false;
+      }
+
+      function captureCanvas() {
+        const c = document.createElement('canvas');
+        c.width = video.videoWidth || 640;
+        c.height = video.videoHeight || 480;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(video, 0, 0, c.width, c.height);
+        return c;
+      }
+
+      async function sendFrame(blob) {
+        const fd = new FormData();
+        fd.append('frame', blob, 'frame.jpg');
+        try {
+          const res = await fetch(PROCESS_URL, { method: 'POST', body: fd });
+          if (!res.ok) {
+            const txt = await res.text().catch(()=>'<no body>');
+            console.error('server error', res.status, txt);
+            statusEl.textContent = 'server error';
+            return;
+          }
+          const b = await res.blob();
+          if (lastUrl) URL.revokeObjectURL(lastUrl);
+          lastUrl = URL.createObjectURL(b);
+          processed.src = lastUrl;
+          statusEl.textContent = 'ok';
+        } catch (e) {
+          console.error('network', e);
+          statusEl.textContent = 'network error';
+        }
+      }
+
+      function startLoop() {
+        const fps = Math.max(1, parseInt(fpsInput.value||'6',10));
+        const interval = Math.round(1000 / fps);
+        if (intervalId) clearInterval(intervalId);
+        intervalId = setInterval(async () => {
+          if (!video || video.readyState < 2) return;
+          if (inFlight) return;
+          inFlight = true;
+          statusEl.textContent = 'sending...';
+          const c = captureCanvas();
+          c.toBlob(async (blob) => {
+            try { if (blob) await sendFrame(blob); } finally { inFlight = false; }
+          }, 'image/jpeg', 0.8);
+        }, interval);
+      }
+
+      startBtn.addEventListener('click', start);
+      stopBtn.addEventListener('click', stop);
+      navigator.mediaDevices && navigator.mediaDevices.addEventListener && navigator.mediaDevices.addEventListener('devicechange', listCameras);
+
+      (async () => {
+        await listCameras();
+        try {
+          const p = await navigator.mediaDevices.getUserMedia({ video: true });
+          p.getTracks().forEach(t => t.stop());
+          await listCameras();
+        } catch (e) { /* ignore */ }
+      })();
+    </script>
+  </body>
 </html>
